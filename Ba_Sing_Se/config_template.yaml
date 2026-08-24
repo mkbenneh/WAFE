@@ -14,6 +14,13 @@ sources:
     provider: "ASDC"
     short_name: "CAL_LID_L1-Standard-V5-00"
 
+  # CALIPSO L0 through CMR's daily virtual-directory listing.
+  # Example directory: .../C3880519029-LARC_CLOUD/temporal/2010/06/07
+  asdc_calipso_l0_virtual_directory:
+    type: cmr_virtual_directory
+    collection_id: "C3880519029-LARC_CLOUD"
+    base_url: "https://cmr.earthdata.nasa.gov"
+
   # ICARE provides CALIPSO mirror access through registered HTTPS/SFTP accounts.
   # Export the selected file URLs/paths to this manifest from ICARE's archive UI.
   # curl in download_file.sh transfers both HTTPS and SFTP URLs.

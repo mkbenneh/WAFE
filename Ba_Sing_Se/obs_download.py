@@ -7,6 +7,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
@@ -116,6 +117,47 @@ def cmr_urls(short_name, version, start, end, provider=None):
         params["page_num"] = str(int(params["page_num"]) + 1)
 
 
+class DirectoryLinks(HTMLParser):
+    """Collect anchors from a CMR virtual-directory HTML index."""
+
+    def __init__(self):
+        super().__init__()
+        self.hrefs = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == "a":
+            href = dict(attrs).get("href")
+            if href:
+                self.hrefs.append(href)
+
+
+def cmr_virtual_directory_urls(collection_id, start, end, base_url=CMR_URL.rsplit("/search/", 1)[0]):
+    """Return file links listed by CMR's per-day virtual-directory endpoint."""
+    if not collection_id:
+        raise ValueError("a virtual-directory source needs collection_id")
+    urls, seen = [], set()
+    for day in days(start, end):
+        directory = (f"{base_url.rstrip('/')}/virtual-directory/collections/{collection_id}/"
+                     f"temporal/{day:%Y/%m/%d}")
+        request = urllib.request.Request(directory, headers={"User-Agent": "obs-downloader/1.0"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            page = response.read().decode(response.headers.get_content_charset() or "utf-8", errors="replace")
+        parser = DirectoryLinks()
+        parser.feed(page)
+        for href in parser.hrefs:
+            url = urllib.parse.urljoin(directory + "/", href)
+            path = urllib.parse.urlparse(url).path
+            # The page includes CSS and navigation anchors too. Keep only common science-data
+            # file suffixes rather than treating every external page asset as a granule.
+            data_suffixes = (".hdf", ".hdf4", ".hdf5", ".h5", ".he5", ".nc", ".nc4",
+                             ".cdf", ".zip", ".tar", ".gz", ".bz2")
+            if (url.startswith(("https://", "http://")) and path.lower().endswith(data_suffixes)
+                    and url not in seen):
+                seen.add(url)
+                urls.append(url)
+    return urls
+
+
 def stac_urls(endpoint, collections, start, end, bbox=None, asset=None):
     """Query a STAC API /search endpoint and return file assets."""
     if not endpoint or not collections:
@@ -153,6 +195,11 @@ def urls_from_profile(profile, args):
         list(days(start, end))
         return cmr_urls(args.short_name or profile.get("short_name"), args.version or profile.get("version"), start, end,
                         args.provider or profile.get("provider"))
+    if kind == "cmr_virtual_directory":
+        start, end = args.start or profile.get("start"), args.end or profile.get("end")
+        list(days(start, end))
+        return cmr_virtual_directory_urls(profile.get("collection_id"), start, end,
+                                          profile.get("base_url", "https://cmr.earthdata.nasa.gov"))
     if kind == "url_list":
         return read_lines(profile_path(profile, profile["path"]))
     if kind == "template":
@@ -166,7 +213,7 @@ def urls_from_profile(profile, args):
         if isinstance(collections, str):
             collections = [collections]
         return stac_urls(profile.get("endpoint"), collections, start, end, args.bbox or profile.get("bbox"), args.asset or profile.get("asset"))
-    raise ValueError(f"unsupported source type: {kind}; use cmr, stac, url_list, or template")
+    raise ValueError(f"unsupported source type: {kind}; use cmr, cmr_virtual_directory, stac, url_list, or template")
 
 
 def command_for(url, args):

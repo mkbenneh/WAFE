@@ -33,6 +33,8 @@ The template includes three provider profiles:
 
 - `laads` for a LAADS DAAC collection (replace its placeholder short name).
 - `asdc_calipso_l1` for NASA Langley ASDC CALIPSO Level 1 data.
+- `asdc_calipso_l0_virtual_directory` for CALIPSO L0 using CMR's daily
+  virtual-directory listing and collection ID `C3880519029-LARC_CLOUD`.
 - `icare_calipso` for a manifest of ICARE HTTPS/SFTP archive links. ICARE
   account access and a selected-file manifest are required; the downloader does
   not guess private archive paths.
