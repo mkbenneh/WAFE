@@ -1,58 +1,82 @@
 # Observation downloader
 
-The downloader is provider-neutral: Python discovers URLs and schedules work;
-`download_file.sh` does the resumable HTTPS/SFTP transfer. Supported discovery modes:
+This tool discovers observation files, then uses `download_file.sh` for
+resumable HTTPS or SFTP transfers. It supports NASA CMR, CMR virtual
+directories, STAC APIs, direct URL manifests, and predictable archive URLs.
 
-- NASA CMR (`--cmr`) for Earth-observation collections such as CALIPSO.
-- STAC API source profiles.
-- A manifest of direct URLs.
-- A date/filename URL template for predictable archive layouts.
-
-Install the Python dependency before using YAML source profiles:
+## Install
 
 ```bash
+cd Ba_Sing_Se
 python3 install_dependencies.py
 ```
 
-Copy `config_template.yaml` to a local `config.yaml`, define a source, then run:
-
-```bash
-python3 obs_download.py --config config.yaml --source asdc_calipso_l1 \
-  --start 2020-01-01 --end 2020-01-02 --dry-run
-```
-
-The same profile downloads with:
-
-```bash
-python3 obs_download.py --config config.yaml --source asdc_calipso_l1 \
-  --start 2020-01-01 --end 2020-01-02 --netrc-file ~/.netrc \
-  --outdir downloads/calipso --concurrency 3
-```
-
-The template includes three provider profiles:
-
-- `laads` for a LAADS DAAC collection (replace its placeholder short name).
-- `asdc_calipso_l1` for NASA Langley ASDC CALIPSO Level 1 data.
-- `asdc_calipso_l0_virtual_directory` for CALIPSO L0 using CMR's daily
-  virtual-directory listing and collection ID `C3880519029-LARC_CLOUD`.
-- `icare_calipso` for a manifest of ICARE HTTPS/SFTP archive links. ICARE
-  account access and a selected-file manifest are required; the downloader does
-  not guess private archive paths.
-
-For a one-off NASA collection, skip the config:
-
-```bash
-python3 obs_download.py --cmr --short-name CAL_LID_L1-Standard-V4-51 \
-  --start 2020-01-01 --end 2020-01-02 --dry-run
-```
-
-Earthdata credentials may be stored locally as:
+Create a local Earthdata credential file when downloading NASA protected data:
 
 ```text
 machine urs.earthdata.nasa.gov login YOUR_USERNAME password YOUR_PASSWORD
 ```
 
-Use `chmod 600 ~/.netrc`. If a macOS framework Python reports
-`CERTIFICATE_VERIFY_FAILED`, run that Python installation's bundled
-`Install Certificates.command`, or use a Python environment with current CA
-certificates.
+Protect it with `chmod 600 ~/.netrc`. Do not put credentials in YAML files or
+notebooks.
+
+## CALIPSO L0: automatic CMR virtual-directory download
+
+The `asdc_calipso_l0_virtual_directory` source is preconfigured for collection
+`C3880519029-LARC_CLOUD`. You only provide the date range; it builds each
+`YYYY/MM/DD` virtual-directory URL, finds the HDF files, and downloads them.
+No file-name list or manual URL template is required.
+
+Preview the files first:
+
+```bash
+python3 obs_download.py --config config_template.yaml \
+  --source asdc_calipso_l0_virtual_directory \
+  --start 2010-06-07 --end 2010-06-07 --dry-run
+```
+
+To download, remove `--dry-run` and provide credentials:
+
+```bash
+python3 obs_download.py --config config_template.yaml \
+  --source asdc_calipso_l0_virtual_directory \
+  --start 2010-06-07 --end 2010-06-07 \
+  --netrc-file ~/.netrc --outdir downloads/calipso-l0 --concurrency 3
+```
+
+## Jupyter notebook
+
+Open `obs_download.ipynb` and edit only the final code cell:
+
+```python
+SOURCE = 'asdc_calipso_l0_virtual_directory'
+START = '2010-06-07'
+END = '2010-06-07'
+OUTDIR = 'downloads/calipso-l0'
+CONCURRENCY = 3
+NETRC_FILE = None  # e.g. '/Users/yourname/.netrc'
+DRY_RUN = True
+```
+
+Set `DRY_RUN = False` to perform the downloads. The notebook calls the same
+CLI workflow, so it automatically discovers the daily L0 files.
+
+## Other supplied source profiles
+
+- `laads`: LAADS DAAC via CMR. Replace its placeholder collection short name.
+- `asdc_calipso_l1`: NASA Langley ASDC CALIPSO Level 1 via CMR.
+- `icare_calipso`: HTTPS/SFTP URL manifest exported from ICARE. ICARE account
+  access is required.
+- `stac_example`, `supplied_urls`, and `archive_template`: examples for STAC,
+  direct URL lists, and regular archive paths.
+
+For a one-off CMR collection without a source profile:
+
+```bash
+python3 obs_download.py --cmr --short-name COLLECTION_SHORT_NAME \
+  --start YYYY-MM-DD --end YYYY-MM-DD --dry-run
+```
+
+If macOS Python reports `CERTIFICATE_VERIFY_FAILED` while querying CMR, run
+that Python installation's `Install Certificates.command`, or use a Python
+environment with current CA certificates.
