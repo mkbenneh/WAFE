@@ -1,0 +1,46 @@
+# Copy to config.yaml and keep credentials outside this file.
+# Each source is a reusable discovery profile. CLI flags take precedence.
+
+sources:
+  # NASA LAADS DAAC: use the target collection's CMR short name.
+  laads:
+    type: cmr
+    provider: "LAADS"
+    short_name: "REPLACE_WITH_LAADS_SHORT_NAME"
+
+  # NASA Langley ASDC is the archive of record for CALIPSO.
+  asdc_calipso_l1:
+    type: cmr
+    provider: "ASDC"
+    short_name: "CAL_LID_L1-Standard-V5-00"
+
+  # ICARE provides CALIPSO mirror access through registered HTTPS/SFTP accounts.
+  # Export the selected file URLs/paths to this manifest from ICARE's archive UI.
+  # curl in download_file.sh transfers both HTTPS and SFTP URLs.
+  icare_calipso:
+    type: url_list
+    path: "inputs/icare_calipso_urls.txt"
+
+  # Any STAC API: uses POST <endpoint>/search.
+  stac_example:
+    type: stac
+    endpoint: "https://example.org/stac"
+    collections: ["my-observation-collection"]
+    # asset: "data"  # Optional: otherwise download all HTTP(S) assets.
+    # bbox: "-75,40,-74,41"
+
+  # Pre-built manifest: one direct HTTP(S) URL per non-comment line.
+  supplied_urls:
+    type: url_list
+    path: "inputs/urls.txt"
+
+  # Archives with predictable paths. {YYYY}, {MM}, {DD}, {YYYYMMDD},
+  # {PRODUCT}, and {FNAME} are available.
+  archive_template:
+    type: template
+    url_template: "https://example.org/{PRODUCT}/{YYYY}/{MM}/{DD}/{FNAME}"
+    product: "example-product"
+    granule_list: "inputs/granules.txt"
+
+# Authentication is normally supplied with --netrc-file or environment variables,
+# never stored in this file.
