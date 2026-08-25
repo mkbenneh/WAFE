@@ -17,6 +17,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; exit 64 ;;
   esac
 done
+if [[ -n $netrc_file && ! -r $netrc_file ]]; then
+  echo "Netrc file is missing or unreadable: $netrc_file" >&2
+  exit 66
+fi
 mkdir -p "$outdir"
 filename=$(basename "${url%%\?*}")
 [[ -n $filename && $filename != / ]] || { echo "URL has no filename: $url" >&2; exit 64; }
@@ -25,7 +29,8 @@ target="$outdir/$filename"
 if command -v curl >/dev/null 2>&1; then
   # The cookie jar preserves Earthdata's redirect/login session.
   cookie_jar="$outdir/.earthdata-cookies.txt"
-  args=(--fail --location --silent --show-error --continue-at - --retry 5 --retry-all-errors
+  # --progress-bar displays transferred bytes and percentage without flooding the terminal.
+  args=(--fail --location --progress-bar --show-error --continue-at - --retry 5 --retry-all-errors
         --retry-delay 3 --connect-timeout 30 --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --output "$target")
   if [[ -n $netrc_file ]]; then
     args+=(--netrc-file "$netrc_file")

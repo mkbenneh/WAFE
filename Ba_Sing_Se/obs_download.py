@@ -231,6 +231,8 @@ def main():
     args = parse_args()
     if args.concurrency < 1:
         raise ValueError("--concurrency must be at least 1")
+    if args.netrc_file and not Path(args.netrc_file).expanduser().is_file():
+        raise ValueError(f"--netrc-file was not found: {args.netrc_file}")
     if args.template and not args.granule_list:
         raise ValueError("--template requires --granule-list")
     if args.granule_list and not args.template:
@@ -257,13 +259,13 @@ def main():
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
     failures = 0
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        pending = {pool.submit(subprocess.run, command_for(url, args), text=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE): url for url in urls}
+        # Do not capture output: curl's native progress bar remains visible while each file transfers.
+        pending = {pool.submit(subprocess.run, command_for(url, args), text=True): url for url in urls}
         for future in as_completed(pending):
             url, result = pending[future], future.result()
             if result.returncode:
                 failures += 1
-                print(f"FAILED: {url}\n{result.stderr.strip()}", file=sys.stderr)
+                print(f"FAILED: {url} -> returncode={result.returncode}", file=sys.stderr)
             else:
                 print(f"OK: {url}")
     return 1 if failures else 0

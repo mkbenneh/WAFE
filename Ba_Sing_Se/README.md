@@ -18,7 +18,7 @@ machine urs.earthdata.nasa.gov login YOUR_USERNAME password YOUR_PASSWORD
 ```
 
 Protect it with `chmod 600 ~/.netrc`. Do not put credentials in YAML files or
-notebooks.
+notebooks. Pass its path with `--netrc-file ~/.netrc` for the CLI.
 
 ## CALIPSO L0: automatic CMR virtual-directory download
 
@@ -34,6 +34,10 @@ python3 obs_download.py --config config_template.yaml \
   --source asdc_calipso_l0_virtual_directory \
   --start 2010-06-07 --end 2010-06-07 --dry-run
 ```
+
+During real downloads, curl displays a native per-file progress bar. With a
+concurrency above 1, multiple progress bars can overlap; use `--concurrency 1`
+for the clearest single-file display.
 
 To download, remove `--dry-run` and provide credentials:
 
@@ -54,12 +58,22 @@ START = '2010-06-07'
 END = '2010-06-07'
 OUTDIR = 'downloads/calipso-l0'
 CONCURRENCY = 3
-NETRC_FILE = None  # e.g. '/Users/yourname/.netrc'
+NETRC_FILE = True  # Uses ~/.netrc; use a path string or None to disable it.
 DRY_RUN = True
 ```
 
 Set `DRY_RUN = False` to perform the downloads. The notebook calls the same
 CLI workflow, so it automatically discovers the daily L0 files.
+
+`NETRC_FILE` accepts three safe forms:
+
+- `True`: use `~/.netrc`.
+- `"/absolute/path/to/.netrc"`: use that credential file.
+- `None`: do not use a netrc file; set `EARTHDATA_USERNAME` and
+  `EARTHDATA_PASSWORD` in the environment instead.
+
+The notebook and command-line tool validate the selected netrc file before a
+download begins and show a clear error if it is missing.
 
 ## Other supplied source profiles
 
