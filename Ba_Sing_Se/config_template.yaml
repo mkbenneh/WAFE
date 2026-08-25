@@ -20,6 +20,7 @@ sources:
     type: cmr_virtual_directory
     collection_id: "C3880519029-LARC_CLOUD"
     base_url: "https://cmr.earthdata.nasa.gov"
+    extensions: [".hdf"]  # CAL_LID_L0-Standard-V1-00.*.hdf
 
   # ICARE provides CALIPSO mirror access through registered HTTPS/SFTP accounts.
   # Export the selected file URLs/paths to this manifest from ICARE's archive UI.

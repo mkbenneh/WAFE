@@ -25,7 +25,9 @@ notebooks. Pass its path with `--netrc-file ~/.netrc` for the CLI.
 The `asdc_calipso_l0_virtual_directory` source is preconfigured for collection
 `C3880519029-LARC_CLOUD`. You only provide the date range; it builds each
 `YYYY/MM/DD` virtual-directory URL, finds the HDF files, and downloads them.
-No file-name list or manual URL template is required.
+The profile explicitly selects `.hdf` CALIPSO L0 granules such as
+`CAL_LID_L0-Standard-V1-00.2010-06-07T00-00-00Z.hdf`. No file-name list or
+manual URL template is required.
 
 Preview the files first:
 

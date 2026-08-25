@@ -131,14 +131,19 @@ class DirectoryLinks(HTMLParser):
                 self.hrefs.append(href)
 
 
-def cmr_virtual_directory_urls(collection_id, start, end, base_url=CMR_URL.rsplit("/search/", 1)[0]):
+def cmr_virtual_directory_urls(collection_id, start, end, base_url=CMR_URL.rsplit("/search/", 1)[0], extensions=None):
     """Return file links listed by CMR's per-day virtual-directory endpoint."""
     if not collection_id:
         raise ValueError("a virtual-directory source needs collection_id")
+    # Profiles may restrict the accepted files (for CALIPSO L0, only .hdf).
+    data_suffixes = tuple(extension.lower() for extension in (extensions or
+                          (".hdf", ".hdf4", ".hdf5", ".h5", ".he5", ".nc", ".nc4",
+                           ".cdf", ".zip", ".tar", ".gz", ".bz2")))
     urls, seen = [], set()
     for day in days(start, end):
         directory = (f"{base_url.rstrip('/')}/virtual-directory/collections/{collection_id}/"
                      f"temporal/{day:%Y/%m/%d}")
+        print(f"Querying CMR virtual directory: {directory}", flush=True)
         request = urllib.request.Request(directory, headers={"User-Agent": "obs-downloader/1.0"})
         with urllib.request.urlopen(request, timeout=60) as response:
             page = response.read().decode(response.headers.get_content_charset() or "utf-8", errors="replace")
@@ -147,10 +152,7 @@ def cmr_virtual_directory_urls(collection_id, start, end, base_url=CMR_URL.rspli
         for href in parser.hrefs:
             url = urllib.parse.urljoin(directory + "/", href)
             path = urllib.parse.urlparse(url).path
-            # The page includes CSS and navigation anchors too. Keep only common science-data
-            # file suffixes rather than treating every external page asset as a granule.
-            data_suffixes = (".hdf", ".hdf4", ".hdf5", ".h5", ".he5", ".nc", ".nc4",
-                             ".cdf", ".zip", ".tar", ".gz", ".bz2")
+            # The page includes CSS and navigation anchors too; retain matching science files only.
             if (url.startswith(("https://", "http://")) and path.lower().endswith(data_suffixes)
                     and url not in seen):
                 seen.add(url)
@@ -199,7 +201,8 @@ def urls_from_profile(profile, args):
         start, end = args.start or profile.get("start"), args.end or profile.get("end")
         list(days(start, end))
         return cmr_virtual_directory_urls(profile.get("collection_id"), start, end,
-                                          profile.get("base_url", "https://cmr.earthdata.nasa.gov"))
+                                          profile.get("base_url", "https://cmr.earthdata.nasa.gov"),
+                                          profile.get("extensions"))
     if kind == "url_list":
         return read_lines(profile_path(profile, profile["path"]))
     if kind == "template":
