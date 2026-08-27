@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Download every CALIOP L2 05 km aerosol-profile granule for one UTC day."""
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -63,7 +64,11 @@ def run_fetch(urls, outdir):
     try:
         generated.chmod(0o700)
         Path(outdir).mkdir(parents=True, exist_ok=True)
-        return subprocess.run([str(generated)], cwd=outdir, check=False).returncode
+        username = os.environ.get("EARTHDATA_USERNAME")
+        password = os.environ.get("EARTHDATA_PASSWORD")
+        credentials = f"{username}\n{password}\n" if username and password else None
+        return subprocess.run([str(generated)], cwd=outdir, input=credentials,
+                              text=True, check=False).returncode
     finally:
         generated.unlink(missing_ok=True)
 
