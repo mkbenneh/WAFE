@@ -1,293 +1,87 @@
 #!/usr/bin/env python3
-"""Discover files from common catalogues and download them with Bash."""
+"""Download every CALIOP L2 05 km aerosol-profile granule for one UTC day."""
 import argparse
-import json
-import os
-import ssl
+import re
 import subprocess
 import sys
-import urllib.parse
-import urllib.request
+import tempfile
+from datetime import date
 from html.parser import HTMLParser
-from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
-
-try:
-    import certifi
-except ImportError:
-    certifi = None
-
-CMR_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
+CMR_DIRECTORY = "https://cmr.earthdata.nasa.gov/virtual-directory/collections/C3880521383-LARC_CLOUD/temporal/{:%Y/%m/%d}"
+FILENAME_PREFIX = "CAL_LID_L2_05kmAPro-Standard-V4-51"
+ASDC_DIRECTORY = "https://asdc.larc.nasa.gov/data/CALIPSO/LID_L2_05kmAPro-Standard-V4-51/{}/{}/"
 
 
-def open_url(request, timeout=60):
-    """Open HTTPS URLs with certifi's current CA bundle when it is installed."""
-    context = ssl.create_default_context(cafile=certifi.where()) if certifi else None
-    return urllib.request.urlopen(request, timeout=timeout, context=context)
-
-
-def parse_args():
-    p = argparse.ArgumentParser(description="Download observation files from catalogue or URL sources.")
-    source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("--cmr", action="store_true", help="Search NASA's CMR catalogue")
-    source.add_argument("--url-list", metavar="FILE", help="One direct data URL per line")
-    source.add_argument("--template", help="URL template; requires --granule-list")
-    source.add_argument("--source", help="Named source in --config")
-    p.add_argument("--config", help="YAML source-profile file")
-    p.add_argument("--short-name", help="CMR collection short name (required with --cmr)")
-    p.add_argument("--version", help="CMR collection version")
-    p.add_argument("--provider", help="Optional CMR provider ID, e.g. LAADS or ASDC")
-    p.add_argument("--start", help="Start date, YYYY-MM-DD (inclusive)")
-    p.add_argument("--end", help="End date, YYYY-MM-DD (inclusive)")
-    p.add_argument("--granule-list", metavar="FILE", help="Filenames used with --template")
-    p.add_argument("--product", default="", help="Value for {PRODUCT} in a template")
-    p.add_argument("--bbox", help="STAC bounding box: west,south,east,north")
-    p.add_argument("--asset", help="STAC asset key to download (default: all downloadable assets)")
-    p.add_argument("--outdir", default="downloads", help="Destination directory")
-    p.add_argument("--concurrency", type=int, default=1,
-                   help="Legacy compatibility option; transfers are sequential")
-    p.add_argument("--netrc-file", help="Earthdata .netrc file (recommended)")
-    p.add_argument("--username", help="Earthdata user; password from --password or environment")
-    p.add_argument("--password", help="Earthdata password; prefer a .netrc file")
-    p.add_argument("--dry-run", action="store_true", help="Print resolved URLs without downloading")
-    return p.parse_args()
-
-
-def source_config(filename, name):
-    if yaml is None:
-        raise ValueError("YAML profiles require PyYAML: pip install pyyaml")
-    with open(filename, encoding="utf-8") as stream:
-        config = yaml.safe_load(stream) or {}
-    sources = config.get("sources", {})
-    if name not in sources:
-        raise ValueError(f"source {name!r} is not defined in {filename}")
-    profile = sources[name]
-    if not isinstance(profile, dict) or "type" not in profile:
-        raise ValueError(f"source {name!r} needs a type")
-    return {**profile, "_base_dir": str(Path(filename).resolve().parent)}
-
-
-def profile_path(profile, value):
-    path = Path(value)
-    return str(path if path.is_absolute() else Path(profile["_base_dir"]) / path)
-
-
-def read_lines(filename):
-    with open(filename, encoding="utf-8") as stream:
-        return [x.strip() for x in stream if x.strip() and not x.lstrip().startswith("#")]
-
-
-def days(start, end):
-    if not start or not end:
-        raise ValueError("--start and --end are required")
-    first, last = date.fromisoformat(start), date.fromisoformat(end)
-    if last < first:
-        raise ValueError("--end must not precede --start")
-    while first <= last:
-        yield first
-        first += timedelta(days=1)
-
-
-def template_urls(template, product, names, start, end):
-    urls = []
-    for day in days(start, end):
-        fields = {"PRODUCT": product, "YYYY": day.strftime("%Y"), "MM": day.strftime("%m"),
-                  "DD": day.strftime("%d"), "YYYYMMDD": day.strftime("%Y%m%d")}
-        urls.extend(template.format(**fields, FNAME=name) for name in names)
-    return urls
-
-
-def cmr_urls(short_name, version, start, end, provider=None):
-    if not short_name:
-        raise ValueError("--short-name is required with --cmr")
-    # Full days avoid excluding observations acquired late on the end date.
-    params = {"short_name": short_name, "temporal": f"{start}T00:00:00Z,{end}T23:59:59Z",
-              "page_size": "2000", "page_num": "1"}
-    if version:
-        params["version"] = version
-    if provider:
-        params["provider"] = provider
-    urls, seen = [], set()
-    while True:
-        request = urllib.request.Request(CMR_URL + "?" + urllib.parse.urlencode(params),
-                                         headers={"User-Agent": "calipso-downloader/1.0"})
-        with open_url(request) as response:
-            entries = json.load(response)["feed"].get("entry", [])
-        for entry in entries:
-            for link in entry.get("links", []):
-                href = link.get("href", "")
-                if href.startswith(("https://", "http://")) and "data#" in link.get("rel", "") and href not in seen:
-                    seen.add(href)
-                    urls.append(href)
-        if len(entries) < int(params["page_size"]):
-            return urls
-        params["page_num"] = str(int(params["page_num"]) + 1)
-
-
-class DirectoryLinks(HTMLParser):
-    """Collect anchors from a CMR virtual-directory HTML index."""
-
+class Links(HTMLParser):
     def __init__(self):
         super().__init__()
         self.hrefs = []
 
     def handle_starttag(self, tag, attrs):
-        if tag.lower() == "a":
-            href = dict(attrs).get("href")
-            if href:
-                self.hrefs.append(href)
+        if tag == "a" and (href := dict(attrs).get("href")):
+            self.hrefs.append(href)
 
 
-def cmr_virtual_directory_urls(collection_id, start, end, base_url=CMR_URL.rsplit("/search/", 1)[0], extensions=None):
-    """Return file links listed by CMR's per-day virtual-directory endpoint."""
-    if not collection_id:
-        raise ValueError("a virtual-directory source needs collection_id")
-    # Profiles may restrict the accepted files (for CALIPSO L0, only .hdf).
-    data_suffixes = tuple(extension.lower() for extension in (extensions or
-                          (".hdf", ".hdf4", ".hdf5", ".h5", ".he5", ".nc", ".nc4",
-                           ".cdf", ".zip", ".tar", ".gz", ".bz2")))
-    urls, seen = [], set()
-    for day in days(start, end):
-        directory = (f"{base_url.rstrip('/')}/virtual-directory/collections/{collection_id}/"
-                     f"temporal/{day:%Y/%m/%d}")
-        print(f"Querying CMR virtual directory: {directory}", flush=True)
-        request = urllib.request.Request(directory, headers={"User-Agent": "obs-downloader/1.0"})
-        with open_url(request) as response:
-            page = response.read().decode(response.headers.get_content_charset() or "utf-8", errors="replace")
-        parser = DirectoryLinks()
-        parser.feed(page)
-        for href in parser.hrefs:
-            url = urllib.parse.urljoin(directory + "/", href)
-            path = urllib.parse.urlparse(url).path
-            # The page includes CSS and navigation anchors too; retain matching science files only.
-            if (url.startswith(("https://", "http://")) and path.lower().endswith(data_suffixes)
-                    and url not in seen):
-                seen.add(url)
-                urls.append(url)
-    return urls
+def arguments():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--day", required=True, help="UTC day: YYYY-MM-DD")
+    parser.add_argument("--outdir", default="downloads/calipso-l0")
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args()
 
 
-def stac_urls(endpoint, collections, start, end, bbox=None, asset=None):
-    """Query a STAC API /search endpoint and return file assets."""
-    if not endpoint or not collections:
-        raise ValueError("a STAC source needs endpoint and collections")
-    search_url = endpoint.rstrip("/") + "/search"
-    body = {"collections": collections, "datetime": f"{start}T00:00:00Z/{end}T23:59:59Z", "limit": 100}
-    if bbox:
-        try:
-            body["bbox"] = [float(value) for value in bbox.split(",")]
-        except ValueError as error:
-            raise ValueError("--bbox must be west,south,east,north") from error
-        if len(body["bbox"]) != 4:
-            raise ValueError("--bbox must have four values")
-    urls, next_url = [], search_url
-    while next_url:
-        payload = json.dumps(body).encode() if next_url == search_url else None
-        request = urllib.request.Request(next_url, data=payload, method="POST" if payload else "GET",
-                                         headers={"Content-Type": "application/json", "User-Agent": "obs-downloader/1.0"})
-        with open_url(request) as response:
-            page = json.load(response)
-        for feature in page.get("features", []):
-            for key, value in feature.get("assets", {}).items():
-                href = value.get("href", "")
-                if (asset is None or key == asset) and href.startswith(("https://", "http://")):
-                    urls.append(href)
-        next_url = next((link["href"] for link in page.get("links", []) if link.get("rel") == "next"), None)
-        body = None
-    return list(dict.fromkeys(urls))
+def urls_for(day):
+    directory = CMR_DIRECTORY.format(date.fromisoformat(day))
+    page = subprocess.run(["curl", "--fail", "--location", "--silent", directory],
+                          text=True, capture_output=True, check=True).stdout
+    parser = Links()
+    parser.feed(page)
+    files = {Path(urlparse(urljoin(directory + "/", href)).path).name for href in parser.hrefs}
+    urls = []
+    for filename in files:
+        if not filename.startswith(FILENAME_PREFIX) or not filename.endswith(".hdf"):
+            continue
+        match = re.search(r"\.(\d{4})-(\d{2})-\d{2}T", filename)
+        if match:
+            urls.append(ASDC_DIRECTORY.format(*match.groups()) + filename)
+    return sorted(urls)
 
 
-def urls_from_profile(profile, args):
-    kind = profile["type"]
-    if kind == "cmr":
-        start, end = args.start or profile.get("start"), args.end or profile.get("end")
-        list(days(start, end))
-        return cmr_urls(args.short_name or profile.get("short_name"), args.version or profile.get("version"), start, end,
-                        args.provider or profile.get("provider"))
-    if kind == "cmr_virtual_directory":
-        start, end = args.start or profile.get("start"), args.end or profile.get("end")
-        list(days(start, end))
-        return cmr_virtual_directory_urls(profile.get("collection_id"), start, end,
-                                          profile.get("base_url", "https://cmr.earthdata.nasa.gov"),
-                                          profile.get("extensions"))
-    if kind == "url_list":
-        return read_lines(profile_path(profile, profile["path"]))
-    if kind == "template":
-        start, end = args.start or profile.get("start"), args.end or profile.get("end")
-        names = read_lines(profile_path(profile, profile["granule_list"]))
-        return template_urls(profile["url_template"], args.product or profile.get("product", ""), names, start, end)
-    if kind == "stac":
-        start, end = args.start or profile.get("start"), args.end or profile.get("end")
-        list(days(start, end))
-        collections = profile.get("collections", [])
-        if isinstance(collections, str):
-            collections = [collections]
-        return stac_urls(profile.get("endpoint"), collections, start, end, args.bbox or profile.get("bbox"), args.asset or profile.get("asset"))
-    raise ValueError(f"unsupported source type: {kind}; use cmr, cmr_virtual_directory, stac, url_list, or template")
-
-
-def command_for(url, args):
-    command = [str(Path(__file__).with_name("download_file.sh")), url, args.outdir]
-    if args.netrc_file:
-        command += ["--netrc-file", args.netrc_file]
-    user = args.username or os.environ.get("EARTHDATA_USERNAME")
-    password = args.password or os.environ.get("EARTHDATA_PASSWORD")
-    if user and password:
-        command += ["--username", user, "--password", password]
-    return command
+def run_fetch(urls, outdir):
+    script = Path(__file__).with_name("caliop_fetch.sh")
+    source = script.read_text(encoding="utf-8")
+    marker = "fetch_urls <<'EDSCEOF'\n"
+    start, end = source.find(marker), source.find("\nEDSCEOF", source.find(marker))
+    if start < 0 or end < 0:
+        raise ValueError("caliop_fetch.sh has no EDSCEOF URL block")
+    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as copy:
+        copy.write(source[:start + len(marker)] + "\n".join(urls) + source[end:])
+        generated = Path(copy.name)
+    try:
+        generated.chmod(0o700)
+        Path(outdir).mkdir(parents=True, exist_ok=True)
+        return subprocess.run([str(generated)], cwd=outdir, check=False).returncode
+    finally:
+        generated.unlink(missing_ok=True)
 
 
 def main():
-    args = parse_args()
-    if args.concurrency < 1:
-        raise ValueError("--concurrency must be at least 1")
-    if args.netrc_file and not Path(args.netrc_file).expanduser().is_file():
-        raise ValueError(f"--netrc-file was not found: {args.netrc_file}")
-    if args.template and not args.granule_list:
-        raise ValueError("--template requires --granule-list")
-    if args.granule_list and not args.template:
-        raise ValueError("--granule-list requires --template")
-    if args.source:
-        if not args.config:
-            raise ValueError("--source requires --config")
-        urls = urls_from_profile(source_config(args.config, args.source), args)
-    elif args.cmr:
-        # Validate date strings before sending the CMR request.
-        list(days(args.start, args.end))
-        urls = cmr_urls(args.short_name, args.version, args.start, args.end, args.provider)
-    elif args.url_list:
-        urls = read_lines(args.url_list)
-    else:
-        urls = template_urls(args.template, args.product, read_lines(args.granule_list), args.start, args.end)
+    args = arguments()
+    urls = urls_for(args.day)
     if not urls:
-        print("No granules found.", file=sys.stderr)
-        return 1
-    print(f"Resolved {len(urls)} file(s).")
+        raise ValueError(f"No L2 granules found for {args.day}")
     if args.dry_run:
         print("\n".join(urls))
         return 0
-    Path(args.outdir).mkdir(parents=True, exist_ok=True)
-    failures = 0
-    # Process one file at a time so curl's native progress bar stays readable.
-    for index, url in enumerate(urls, start=1):
-        print(f"Downloading {index}/{len(urls)}: {url}", flush=True)
-        result = subprocess.run(command_for(url, args), text=True)
-        if result.returncode:
-            failures += 1
-            print(f"FAILED {index}/{len(urls)}: {url} -> returncode={result.returncode}", file=sys.stderr)
-        else:
-            print(f"OK {index}/{len(urls)}: {url}")
-    return 1 if failures else 0
+    return run_fetch(urls, args.outdir)
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (ValueError, OSError, urllib.error.URLError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"Error: {error}", file=sys.stderr)
         sys.exit(2)

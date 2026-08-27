@@ -11,6 +11,12 @@
       "requirement": "PyYAML>=6.0,<7.0",
       "import_name": "yaml",
       "purpose": "Read YAML source profiles"
+    },
+    {
+      "distribution": "certifi",
+      "requirement": "certifi>=2024.0.0",
+      "import_name": "certifi",
+      "purpose": "Provide a portable HTTPS certificate bundle"
     }
   ]
 }

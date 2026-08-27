@@ -49,6 +49,24 @@ During real downloads, files are processed one at a time. Each transfer shows
 curl's native progress bar, and the downloader prints a `Downloading n/total`
 counter before it starts the next file.
 
+## Slow or large downloads
+
+Files stream directly to disk; they are not held in memory. Downloads resume
+from the partial local file after a retry. By default, a connection has 30
+seconds to open and is only retried after transferring less than one byte per
+second for five minutes. Adjust these values for a slower connection without
+changing the script:
+
+```bash
+export DOWNLOAD_CONNECT_TIMEOUT=60
+export DOWNLOAD_LOW_SPEED_LIMIT=1
+export DOWNLOAD_LOW_SPEED_TIME=600
+```
+
+`DOWNLOAD_LOW_SPEED_TIME` is the grace period for an effectively idle
+connection. The defaults favour completing very large files while still
+recovering from stalled transfers.
+
 To download, remove `--dry-run` and provide credentials:
 
 ```bash
