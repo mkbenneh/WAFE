@@ -58,19 +58,39 @@ def run_fetch(urls, outdir):
     start, end = source.find(marker), source.find("\nEDSCEOF", source.find(marker))
     if start < 0 or end < 0:
         raise ValueError("caliop_fetch.sh has no EDSCEOF URL block")
+    generated_source = source[:start + len(marker)] + "\n".join(urls) + source[end:]
+    # Keep the generated URLs in the real script so it can also be run directly.
+    script.write_text(generated_source, encoding="utf-8")
+    if os.environ.get("EARTHDATA_USERNAME") and os.environ.get("EARTHDATA_PASSWORD"):
+        generated_source = generated_source.replace(
+            "\nprompt_credentials\n",
+            "\nprintf 'machine urs.earthdata.nasa.gov login %s password %s\\n' "
+            "\"$EARTHDATA_USERNAME\" \"$EARTHDATA_PASSWORD\" > \"$netrc\"\n",
+            1,
+        )
     with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as copy:
-        copy.write(source[:start + len(marker)] + "\n".join(urls) + source[end:])
+        copy.write(generated_source)
         generated = Path(copy.name)
     try:
         generated.chmod(0o700)
         Path(outdir).mkdir(parents=True, exist_ok=True)
-        username = os.environ.get("EARTHDATA_USERNAME")
-        password = os.environ.get("EARTHDATA_PASSWORD")
-        credentials = f"{username}\n{password}\n" if username and password else None
-        return subprocess.run([str(generated)], cwd=outdir, input=credentials,
-                              text=True, check=False).returncode
+        output_path = Path(outdir)
+        result = subprocess.run([str(generated)], cwd=output_path, text=True, check=False)
+        invalid = [Path(urlparse(url).path).name for url in urls
+                   if not is_hdf(output_path / Path(urlparse(url).path).name)]
+        if invalid:
+            raise ValueError("HTML or incomplete response saved instead of HDF: " + ", ".join(invalid))
+        return result.returncode
     finally:
         generated.unlink(missing_ok=True)
+
+
+def is_hdf(path):
+    if not path.is_file():
+        return False
+    with path.open("rb") as file:
+        signature = file.read(8)
+    return signature.startswith(b"\x0e\x03\x13\x01") or signature == b"\x89HDF\r\n\x1a\n"
 
 
 def main():
