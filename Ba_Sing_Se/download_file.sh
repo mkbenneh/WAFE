@@ -30,7 +30,7 @@ if command -v curl >/dev/null 2>&1; then
   # The cookie jar preserves Earthdata's redirect/login session.
   cookie_jar="$outdir/.earthdata-cookies.txt"
   # --progress-bar displays transferred bytes and percentage without flooding the terminal.
-  args=(--fail --location --progress-bar --show-error --continue-at - --retry 5 --retry-all-errors
+  args=(--fail --location --progress-bar --show-error --continue-at - --retry 5
         --retry-delay 3 --connect-timeout 30 --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --output "$target")
   if [[ -n $netrc_file ]]; then
     args+=(--netrc-file "$netrc_file")

@@ -11,14 +11,22 @@ cd Ba_Sing_Se
 python3 install_dependencies.py
 ```
 
-Create a local Earthdata credential file when downloading NASA protected data:
+## Earthdata credentials
+
+Earthdata credentials are required to download the protected CALIPSO L0 files.
+To authenticate, either create a local
+`~/.netrc` entry:
 
 ```text
-machine urs.earthdata.nasa.gov login YOUR_USERNAME password YOUR_PASSWORD
+machine urs.earthdata.nasa.gov
+login YOUR_USERNAME
+password YOUR_PASSWORD
 ```
 
 Protect it with `chmod 600 ~/.netrc`. Do not put credentials in YAML files or
-notebooks. Pass its path with `--netrc-file ~/.netrc` for the CLI.
+notebooks. Pass its path with `--netrc-file ~/.netrc` for the CLI, or set
+`EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` in the environment before
+launching the notebook.
 
 ## CALIPSO L0: automatic CMR virtual-directory download
 
@@ -37,9 +45,9 @@ python3 obs_download.py --config config_template.yaml \
   --start 2010-06-07 --end 2010-06-07 --dry-run
 ```
 
-During real downloads, curl displays a native per-file progress bar. With a
-concurrency above 1, multiple progress bars can overlap; use `--concurrency 1`
-for the clearest single-file display.
+During real downloads, files are processed one at a time. Each transfer shows
+curl's native progress bar, and the downloader prints a `Downloading n/total`
+counter before it starts the next file.
 
 To download, remove `--dry-run` and provide credentials:
 
@@ -47,7 +55,7 @@ To download, remove `--dry-run` and provide credentials:
 python3 obs_download.py --config config_template.yaml \
   --source asdc_calipso_l0_virtual_directory \
   --start 2010-06-07 --end 2010-06-07 \
-  --netrc-file ~/.netrc --outdir downloads/calipso-l0 --concurrency 3
+  --netrc-file ~/.netrc --outdir downloads/calipso-l0
 ```
 
 ## Jupyter notebook
@@ -59,15 +67,15 @@ SOURCE = 'asdc_calipso_l0_virtual_directory'
 START = '2010-06-07'
 END = '2010-06-07'
 OUTDIR = 'downloads/calipso-l0'
-CONCURRENCY = 3
-NETRC_FILE = True  # Uses ~/.netrc; use a path string or None to disable it.
+CONCURRENCY = 1  # Downloads are processed one at a time.
+NETRC_FILE = True  # Use ~/.netrc for protected CALIPSO L0 downloads.
 DRY_RUN = True
 ```
 
 Set `DRY_RUN = False` to perform the downloads. The notebook calls the same
 CLI workflow, so it automatically discovers the daily L0 files.
 
-`NETRC_FILE` accepts three safe forms:
+For sources that require authentication, `NETRC_FILE` accepts three safe forms:
 
 - `True`: use `~/.netrc`.
 - `"/absolute/path/to/.netrc"`: use that credential file.

@@ -3,12 +3,12 @@
 import argparse
 import json
 import os
+import ssl
 import subprocess
 import sys
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -17,7 +17,18 @@ try:
 except ImportError:
     yaml = None
 
+try:
+    import certifi
+except ImportError:
+    certifi = None
+
 CMR_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
+
+
+def open_url(request, timeout=60):
+    """Open HTTPS URLs with certifi's current CA bundle when it is installed."""
+    context = ssl.create_default_context(cafile=certifi.where()) if certifi else None
+    return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
 def parse_args():
@@ -38,7 +49,8 @@ def parse_args():
     p.add_argument("--bbox", help="STAC bounding box: west,south,east,north")
     p.add_argument("--asset", help="STAC asset key to download (default: all downloadable assets)")
     p.add_argument("--outdir", default="downloads", help="Destination directory")
-    p.add_argument("--concurrency", type=int, default=4, help="Parallel transfers (default: 4)")
+    p.add_argument("--concurrency", type=int, default=1,
+                   help="Legacy compatibility option; transfers are sequential")
     p.add_argument("--netrc-file", help="Earthdata .netrc file (recommended)")
     p.add_argument("--username", help="Earthdata user; password from --password or environment")
     p.add_argument("--password", help="Earthdata password; prefer a .netrc file")
@@ -104,7 +116,7 @@ def cmr_urls(short_name, version, start, end, provider=None):
     while True:
         request = urllib.request.Request(CMR_URL + "?" + urllib.parse.urlencode(params),
                                          headers={"User-Agent": "calipso-downloader/1.0"})
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with open_url(request) as response:
             entries = json.load(response)["feed"].get("entry", [])
         for entry in entries:
             for link in entry.get("links", []):
@@ -145,7 +157,7 @@ def cmr_virtual_directory_urls(collection_id, start, end, base_url=CMR_URL.rspli
                      f"temporal/{day:%Y/%m/%d}")
         print(f"Querying CMR virtual directory: {directory}", flush=True)
         request = urllib.request.Request(directory, headers={"User-Agent": "obs-downloader/1.0"})
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with open_url(request) as response:
             page = response.read().decode(response.headers.get_content_charset() or "utf-8", errors="replace")
         parser = DirectoryLinks()
         parser.feed(page)
@@ -178,7 +190,7 @@ def stac_urls(endpoint, collections, start, end, bbox=None, asset=None):
         payload = json.dumps(body).encode() if next_url == search_url else None
         request = urllib.request.Request(next_url, data=payload, method="POST" if payload else "GET",
                                          headers={"Content-Type": "application/json", "User-Agent": "obs-downloader/1.0"})
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with open_url(request) as response:
             page = json.load(response)
         for feature in page.get("features", []):
             for key, value in feature.get("assets", {}).items():
@@ -261,16 +273,15 @@ def main():
         return 0
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
     failures = 0
-    with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        # Do not capture output: curl's native progress bar remains visible while each file transfers.
-        pending = {pool.submit(subprocess.run, command_for(url, args), text=True): url for url in urls}
-        for future in as_completed(pending):
-            url, result = pending[future], future.result()
-            if result.returncode:
-                failures += 1
-                print(f"FAILED: {url} -> returncode={result.returncode}", file=sys.stderr)
-            else:
-                print(f"OK: {url}")
+    # Process one file at a time so curl's native progress bar stays readable.
+    for index, url in enumerate(urls, start=1):
+        print(f"Downloading {index}/{len(urls)}: {url}", flush=True)
+        result = subprocess.run(command_for(url, args), text=True)
+        if result.returncode:
+            failures += 1
+            print(f"FAILED {index}/{len(urls)}: {url} -> returncode={result.returncode}", file=sys.stderr)
+        else:
+            print(f"OK {index}/{len(urls)}: {url}")
     return 1 if failures else 0
 
 
