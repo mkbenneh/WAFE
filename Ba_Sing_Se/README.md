@@ -1,124 +1,51 @@
-# Observation downloader
+# CALIOP L2 aerosol-profile downloader
 
-This tool discovers observation files, then uses `download_file.sh` for
-resumable HTTPS or SFTP transfers. It supports NASA CMR, CMR virtual
-directories, STAC APIs, direct URL manifests, and predictable archive URLs.
+Downloads every available `CAL_LID_L2_05kmAPro-Standard-V4-51` HDF granule for
+one UTC day. Python reads the L2 CMR virtual directory, constructs the matching
+ASDC data URLs, writes them into `caliop_fetch.sh`'s URL block, and launches the
+script's existing Earthdata download flow.
 
-## Install
+## Requirements
 
-```bash
-cd Ba_Sing_Se
-python3 install_dependencies.py
-```
+- Python 3.10 or later
+- `curl`
+- An Earthdata Login with access to ASDC CALIPSO data
 
-## Earthdata credentials
+## Download a day
 
-Earthdata credentials are required to download the protected CALIPSO L0 files.
-To authenticate, either create a local
-`~/.netrc` entry:
-
-```text
-machine urs.earthdata.nasa.gov
-login YOUR_USERNAME
-password YOUR_PASSWORD
-```
-
-Protect it with `chmod 600 ~/.netrc`. Do not put credentials in YAML files or
-notebooks. Pass its path with `--netrc-file ~/.netrc` for the CLI, or set
-`EARTHDATA_USERNAME` and `EARTHDATA_PASSWORD` in the environment before
-launching the notebook.
-
-## CALIPSO L0: automatic CMR virtual-directory download
-
-The `asdc_calipso_l0_virtual_directory` source is preconfigured for collection
-`C3880519029-LARC_CLOUD`. You only provide the date range; it builds each
-`YYYY/MM/DD` virtual-directory URL, finds the HDF files, and downloads them.
-The profile explicitly selects `.hdf` CALIPSO L0 granules such as
-`CAL_LID_L0-Standard-V1-00.2010-06-07T00-00-00Z.hdf`. No file-name list or
-manual URL template is required.
-
-Preview the files first:
+Run from `Ba_Sing_Se`:
 
 ```bash
-python3 obs_download.py --config config_template.yaml \
-  --source asdc_calipso_l0_virtual_directory \
-  --start 2010-06-07 --end 2010-06-07 --dry-run
+python3 obs_download.py --day 2023-05-15 --outdir downloads/caliop-l2
 ```
 
-During real downloads, files are processed one at a time. Each transfer shows
-curl's native progress bar, and the downloader prints a `Downloading n/total`
-counter before it starts the next file.
+The script updates the `fetch_urls <<'EDSCEOF'` block in `caliop_fetch.sh`
+with the L2 URLs for that day. The bash script then prompts for Earthdata
+credentials and downloads files into the selected output directory.
 
-## Slow or large downloads
-
-Files stream directly to disk; they are not held in memory. Downloads resume
-from the partial local file after a retry. By default, a connection has 30
-seconds to open and is only retried after transferring less than one byte per
-second for five minutes. Adjust these values for a slower connection without
-changing the script:
+Preview constructed URLs without modifying the bash script or downloading:
 
 ```bash
-export DOWNLOAD_CONNECT_TIMEOUT=60
-export DOWNLOAD_LOW_SPEED_LIMIT=1
-export DOWNLOAD_LOW_SPEED_TIME=600
-```
-
-`DOWNLOAD_LOW_SPEED_TIME` is the grace period for an effectively idle
-connection. The defaults favour completing very large files while still
-recovering from stalled transfers.
-
-To download, remove `--dry-run` and provide credentials:
-
-```bash
-python3 obs_download.py --config config_template.yaml \
-  --source asdc_calipso_l0_virtual_directory \
-  --start 2010-06-07 --end 2010-06-07 \
-  --netrc-file ~/.netrc --outdir downloads/calipso-l0
+python3 obs_download.py --day 2023-05-15 --dry-run
 ```
 
 ## Jupyter notebook
 
-Open `obs_download.ipynb` and edit only the final code cell:
+Open `obs_download.ipynb`, set `DAY`, `OUTDIR`, and `DRY_RUN`, then run its
+single code cell. It prompts for your Earthdata username and hidden password;
+those values are passed only to the child download process and are not saved in
+the notebook.
 
-```python
-SOURCE = 'asdc_calipso_l0_virtual_directory'
-START = '2010-06-07'
-END = '2010-06-07'
-OUTDIR = 'downloads/calipso-l0'
-CONCURRENCY = 1  # Downloads are processed one at a time.
-NETRC_FILE = True  # Use ~/.netrc for protected CALIPSO L0 downloads.
-DRY_RUN = True
-```
+## Download validation
 
-Set `DRY_RUN = False` to perform the downloads. The notebook calls the same
-CLI workflow, so it automatically discovers the daily L0 files.
+After downloading, Python checks each file’s HDF4/HDF5 signature. A login page
+or other HTML response saved with an `.hdf` name is reported as an error rather
+than treated as data. Delete any such invalid files before retrying.
 
-For sources that require authentication, `NETRC_FILE` accepts three safe forms:
+## Tests
 
-- `True`: use `~/.netrc`.
-- `"/absolute/path/to/.netrc"`: use that credential file.
-- `None`: do not use a netrc file; set `EARTHDATA_USERNAME` and
-  `EARTHDATA_PASSWORD` in the environment instead.
-
-The notebook and command-line tool validate the selected netrc file before a
-download begins and show a clear error if it is missing.
-
-## Other supplied source profiles
-
-- `laads`: LAADS DAAC via CMR. Replace its placeholder collection short name.
-- `asdc_calipso_l1`: NASA Langley ASDC CALIPSO Level 1 via CMR.
-- `icare_calipso`: HTTPS/SFTP URL manifest exported from ICARE. ICARE account
-  access is required.
-- `stac_example`, `supplied_urls`, and `archive_template`: examples for STAC,
-  direct URL lists, and regular archive paths.
-
-For a one-off CMR collection without a source profile:
+Run the offline test suite with:
 
 ```bash
-python3 obs_download.py --cmr --short-name COLLECTION_SHORT_NAME \
-  --start YYYY-MM-DD --end YYYY-MM-DD --dry-run
+python3 -m pytest
 ```
-
-If macOS Python reports `CERTIFICATE_VERIFY_FAILED` while querying CMR, run
-that Python installation's `Install Certificates.command`, or use a Python
-environment with current CA certificates.
