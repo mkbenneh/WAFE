@@ -5,7 +5,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
@@ -13,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 
 CMR_DIRECTORY = "https://cmr.earthdata.nasa.gov/virtual-directory/collections/C3880521383-LARC_CLOUD/temporal/{:%Y/%m/%d}"
 FILENAME_PREFIX = "CAL_LID_L2_05kmAPro-Standard-V4-51"
-ASDC_DIRECTORY = "https://asdc.larc.nasa.gov/data/CALIPSO/LID_L2_05kmAPro-Standard-V4-51/{}/{}/"
+ASDC_DIRECTORY = "https://data.asdc.earthdata.nasa.gov/asdc-prod-protected/CALIPSO/CAL_LID_L2_05kmAPro-Standard-V4-51_V4-51/{}.{}"
 
 
 class Links(HTMLParser):
@@ -29,7 +28,7 @@ class Links(HTMLParser):
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--day", required=True, help="UTC day: YYYY-MM-DD")
-    parser.add_argument("--outdir", default="downloads/calipso-l0")
+    parser.add_argument("--outdir", default="downloads/caliop-l2")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -47,7 +46,7 @@ def urls_for(day):
             continue
         match = re.search(r"\.(\d{4})-(\d{2})-\d{2}T", filename)
         if match:
-            urls.append(ASDC_DIRECTORY.format(*match.groups()) + filename)
+            urls.append(ASDC_DIRECTORY.format(*match.groups()) + "/" + filename)
     return sorted(urls)
 
 
@@ -61,28 +60,17 @@ def run_fetch(urls, outdir):
     generated_source = source[:start + len(marker)] + "\n".join(urls) + source[end:]
     # Keep the generated URLs in the real script so it can also be run directly.
     script.write_text(generated_source, encoding="utf-8")
-    if os.environ.get("EARTHDATA_USERNAME") and os.environ.get("EARTHDATA_PASSWORD"):
-        generated_source = generated_source.replace(
-            "\nprompt_credentials\n",
-            "\nprintf 'machine urs.earthdata.nasa.gov login %s password %s\\n' "
-            "\"$EARTHDATA_USERNAME\" \"$EARTHDATA_PASSWORD\" > \"$netrc\"\n",
-            1,
-        )
-    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as copy:
-        copy.write(generated_source)
-        generated = Path(copy.name)
-    try:
-        generated.chmod(0o700)
-        Path(outdir).mkdir(parents=True, exist_ok=True)
-        output_path = Path(outdir)
-        result = subprocess.run([str(generated)], cwd=output_path, text=True, check=False)
-        invalid = [Path(urlparse(url).path).name for url in urls
-                   if not is_hdf(output_path / Path(urlparse(url).path).name)]
-        if invalid:
-            raise ValueError("HTML or incomplete response saved instead of HDF: " + ", ".join(invalid))
-        return result.returncode
-    finally:
-        generated.unlink(missing_ok=True)
+    output_path = Path(outdir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    username = os.environ.get("EARTHDATA_USERNAME")
+    password = os.environ.get("EARTHDATA_PASSWORD")
+    credentials = f"{username}\n{password}\n" if username and password else None
+    result = subprocess.run([str(script)], cwd=output_path, input=credentials, text=True, check=False)
+    invalid = [Path(urlparse(url).path).name for url in urls
+               if not is_hdf(output_path / Path(urlparse(url).path).name)]
+    if invalid:
+        raise ValueError("HTML or incomplete response saved instead of HDF: " + ", ".join(invalid))
+    return result.returncode
 
 
 def is_hdf(path):

@@ -1,4 +1,4 @@
-name: Python application
+name: CALIOP L2 checks
 
 on:
   push:
