@@ -32,7 +32,20 @@ exit_with_error() {
     exit 1
 }
 
-prompt_credentials
+#prompt_credentials
+
+netrc_sources=${NETRC_FILE:-"$HOME/.netrc"}
+
+if [[ -r "$netrc_source" ]] &&
+    grep -q 'machine urs.earthdata.nasa.gov' "$netrc_source";
+then
+    cp "$netrc_source" "$netrc"
+    chmod 0600 "$netrc"
+    echo "Using Earth credentials from $netrc_source"
+else
+    prompt_credentials
+fi
+
   detect_app_approval() {
     approved=`curl -s -b "$cookiejar" -c "$cookiejar" -L --max-redirs 5 --netrc-file "$netrc" https://data.asdc.earthdata.nasa.gov/asdc-prod-protected/CALIPSO/CAL_LID_L2_05kmAPro-Standard-V4-51_V4-51/2023.06/CAL_LID_L2_05kmAPro-Standard-V4-51.2023-06-29T19-25-25ZD.hdf -w '\n%{http_code}' | tail  -1`
     if [ "$approved" -ne "200" ] && [ "$approved" -ne "301" ] && [ "$approved" -ne "302" ]; then
